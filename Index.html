@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Work Error Reporting Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #f4f7fa;
+    padding: 20px;
+}
+.container {
+    max-width: 1100px;
+    margin: auto;
+    background: #ffffff;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+h2 {
+    text-align: center;
+    color: #0077b6;
+}
+label {
+    font-weight: bold;
+    margin-top: 10px;
+    display: block;
+}
+input, select, textarea {
+    width: 100%;
+    padding: 8px;
+    margin-top: 5px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+}
+button {
+    margin-top: 15px;
+    padding: 10px;
+    width: 100%;
+    border: none;
+    border-radius: 5px;
+    background-color: #0077b6;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+}
+button:hover {
+    background-color: #023e8a;
+}
+table {
+    width: 100%;
+    margin-top: 25px;
+    border-collapse: collapse;
+}
+table, th, td {
+    border: 1px solid #ddd;
+}
+th {
+    background-color: #0077b6;
+    color: white;
+}
+th, td {
+    padding: 8px;
+    text-align: center;
+}
+img.preview {
+    width: 80px;
+    border-radius: 5px;
+}
+canvas {
+    margin-top: 40px;
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+<h2>Work Error Reporting & Dashboard</h2>
+
+<form id="errorForm">
+    <label>Employee Name</label>
+    <input type="text" id="employee" required>
+
+    <label>Error Category</label>
+    <select id="errorType">
+        <option value="Customer Service">Customer Service</option>
+        <option value="Documentation/System">Documentation / System</option>
+        <option value="Finance">Finance</option>
+        <option value="Communication">Communication</option>
+        <option value="Housekeeping/Cleanliness">Housekeeping / Cleanliness</option>
+        <option value="Others">Others</option>
+    </select>
+
+    <label>Error Description</label>
+    <textarea id="description" rows="3"></textarea>
+
+    <label>Upload Photo Evidence</label>
+    <input type="file" id="photo" accept="image/*">
+
+    <button type="submit">Submit Report</button>
+</form>
+
+<table id="dataTable">
+    <thead>
+        <tr>
+            <th>Employee</th>
+            <th>Category</th>
+            <th>Description</th>
+            <th>Photo</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<canvas id="errorChart"></canvas>
+
+</div>
+
+<script>
+let records = JSON.parse(localStorage.getItem("errorRecordsEN")) || [];
+
+// Large professional color pool
+const colorPool = [
+"#1abc9c","#2ecc71","#3498db","#9b59b6","#34495e",
+"#16a085","#27ae60","#2980b9","#8e44ad","#2c3e50",
+"#f1c40f","#e67e22","#e74c3c","#95a5a6","#d35400",
+"#c0392b","#7f8c8d","#ff6b6b","#6c5ce7","#00b894",
+"#fdcb6e","#0984e3","#e84393","#00cec9","#fab1a0"
+];
+
+// Stable employee color mapping
+let employeeColors = {};
+
+function getEmployeeColor(name) {
+    if (!employeeColors[name]) {
+        const index = Object.keys(employeeColors).length % colorPool.length;
+        employeeColors[name] = colorPool[index];
+    }
+    return employeeColors[name];
+}
+
+// Count & sort employees
+function generateEmployeeData() {
+    let counts = {};
+    records.forEach(r => {
+        if (!counts[r.employee]) counts[r.employee] = 0;
+        counts[r.employee]++;
+    });
+
+    let sorted = Object.entries(counts)
+        .sort((a,b) => b[1] - a[1]);
+
+    return {
+        labels: sorted.map(item => item[0]),
+        values: sorted.map(item => item[1])
+    };
+}
+
+const ctx = document.getElementById('errorChart').getContext('2d');
+let chartData = generateEmployeeData();
+
+const errorChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+        labels: chartData.labels,
+        datasets: [{
+            label: 'Number of Errors by Employee',
+            data: chartData.values,
+            backgroundColor: chartData.labels.map(name => getEmployeeColor(name))
+        }]
+    },
+    options: {
+        responsive: true,
+        scales: {
+            y: { beginAtZero: true }
+        }
+    }
+});
+
+function updateChart() {
+    let chartData = generateEmployeeData();
+    errorChart.data.labels = chartData.labels;
+    errorChart.data.datasets[0].data = chartData.values;
+    errorChart.data.datasets[0].backgroundColor =
+        chartData.labels.map(name => getEmployeeColor(name));
+    errorChart.update();
+}
+
+function renderTable() {
+    const tbody = document.querySelector("#dataTable tbody");
+    tbody.innerHTML = "";
+
+    records.forEach(r => {
+        const row = tbody.insertRow();
+        row.insertCell(0).innerText = r.employee;
+        row.insertCell(1).innerText = r.type;
+        row.insertCell(2).innerText = r.description;
+
+        const imgCell = row.insertCell(3);
+        if (r.photo) {
+            const img = document.createElement("img");
+            img.src = r.photo;
+            img.className = "preview";
+            imgCell.appendChild(img);
+        }
+    });
+}
+
+document.getElementById("errorForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+
+    const employee = document.getElementById("employee").value.trim();
+    const type = document.getElementById("errorType").value;
+    const description = document.getElementById("description").value;
+    const file = document.getElementById("photo").files[0];
+
+    const reader = new FileReader();
+    reader.onload = function() {
+        const newRecord = {
+            employee,
+            type,
+            description,
+            photo: reader.result || null
+        };
+
+        records.push(newRecord);
+        localStorage.setItem("errorRecordsEN", JSON.stringify(records));
+
+        renderTable();
+        updateChart();
+        document.getElementById("errorForm").reset();
+    };
+
+    if (file) {
+        reader.readAsDataURL(file);
+    } else {
+        reader.onload();
+    }
+});
+
+renderTable();
+updateChart();
+</script>
+
+</body>
+</html>
