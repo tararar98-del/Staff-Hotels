@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Wanaburee Staff Meal System</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+  <style>
+    body {font-family:Poppins; margin:0; background:#f4f6f9;}
+    button { cursor: pointer; background-color: #198754; color: white; border: none; padding: 12px 20px; border-radius: 12px; font-size: 16px; font-weight: 600; transition: all 0.3s ease; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    button:hover { background-color: #157347; transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0,0,0,0.15); }
+   .meals {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+}
+
+@media (max-width: 500px) {
+  .meals {
+    grid-template-columns: 1fr;
+  }
+}
+
+    .meal { background: #f8f9fa; padding: 18px; border-radius: 15px; text-align: center; cursor: pointer; transition: all 0.25s ease; border: 2px solid transparent; font-weight: 500; transform: scale(1); }
+    .meal:active { transform: scale(0.96); }
+    .meal input { display: block; margin: 0 auto 8px; transform: scale(1.2); }
+    .meal:hover { background: #e9f7ef; border: 2px solid #198754; }
+    .meal.active { background: #d1e7dd; border: 2px solid #198754; }
+    button:active { transform: translateY(0); box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    .success {background:#d1e7dd;color:#0f5132;padding:12px;border-radius:10px;margin-top:15px;font-weight:600;}
+    .logo {width:200px; max-width:100%; display:block; margin:auto; margin-bottom:30px;}
+    .card {background:white; max-width:450px; margin:auto; margin-top:40px; padding:30px; border-radius:20px; box-shadow:0 10px 30px rgba(0,0,0,0.1); text-align:center;}
+    input, select {width:100%; padding:12px; border:1px solid #ddd; border-radius:8px; margin:8px 0; box-sizing:border-box;}
+    .dashboard {padding:30px;}
+    .topbar {display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap;}
+    .cards {display:grid; grid-template-columns:repeat(3,1fr); gap:20px; margin-bottom:25px;}
+    .box {background:white; padding:20px; border-radius:10px; box-shadow:0 5px 15px rgba(0,0,0,0.1); text-align:center;}
+    .box h2 {margin:0; color:#198754;}
+    table {width:100%; border-collapse:collapse; background:white; font-size:14px;}
+    th {background:#198754; color:white; padding:10px;}
+    td {padding:8px; border-bottom:1px solid #eee; text-align:center;}
+    .kitchen {text-align:center; padding:20px;}
+    .kitchen-grid {display:grid; grid-template-columns:repeat(auto-fit, minmax(120px,1fr)); gap:20px; margin-top:20px;}
+    .kitchen-box {background:white; padding:20px; border-radius:15px; box-shadow:0 10px 20px rgba(0,0,0,0.1);}
+    .kitchen-box h1 {font-size:36px; margin:0; color:#198754;}
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getFirestore, collection, onSnapshot, doc, setDoc, getDocs, query, where, deleteDoc } 
+    from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    
+    const firebaseConfig = {
+      apiKey: "AIzaSyAMnLd8ExAYYSqibe4l8DhPraKVmYxzaFY",
+      authDomain: "hotel-staff-2026.firebaseapp.com",
+      projectId: "hotel-staff-2026",
+      storageBucket: "hotel-staff-2026.firebasestorage.app",
+      messagingSenderId: "998985926525",
+      appId: "1:998985926525:web:4b4bbc7fb9435e7b612e14",
+      measurementId: "G-GQC18HT7SS"
+    };
+    
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    window.db = db;
+    
+    if ("serviceWorker" in navigator) 
+      navigator.serviceWorker.register("sw.js").catch(()=>{});
+    
+    let lastRegistered = localStorage.getItem("lastRegistered") || "";
+    let mode = location.hash.replace("#","");
+
+    window.addEventListener("hashchange", () => {
+  mode = location.hash.replace("#", "");
+  renderPage(); // โหลดหน้าใหม่แบบ SPA โดยไม่ต้องรีเฟรชทั้งหน้า
+});
+    let allData = [];
+    let menu = {Morning:"",Afternoon:"",Evening:"",Night:""};
+    let isSubmitting = false;
+    let unsubscribeStaff = null;
+    let unsubscribeKitchen = null;
+    let unsubscribeMenu = null;
+    let unsubscribeDashboard = null;
+    let isFirstLoad = true;
+    
+    function formatDate(date = new Date()) {
+      let d = date.getDate().toString().padStart(2,"0");
+      let m = (date.getMonth()+1).toString().padStart(2,"0");
+      let y = date.getFullYear();
+      return `${d}-${m}-${y}`;
+    }
+    
+    if(mode=="admin") showLogin();
+    else if(mode=="kitchen") showKitchen();
+    else showStaff();
+    
+    function showStaff(){
+  renderStaff();
+
+  if(unsubscribeMenu) unsubscribeMenu();
+
+  unsubscribeMenu = onSnapshot(doc(db,"menu","today"), (docSnap)=>{
+    if(docSnap.exists()){ 
+      menu = docSnap.data();  
+      updateMenuUI(); // ✅ เรียกตรงนี้
+    }
+  });
+}
+     
+   function updateMenuUI() {
+  document.querySelectorAll(".meal").forEach(el => {
+    const checkbox = el.querySelector("input");
+    const type = checkbox.value;
+
+    let icon = "";
+    if(type === "Morning") icon = "🍳";
+    if(type === "Afternoon") icon = "🍛";
+    if(type === "Evening") icon = "🍜";
+    if(type === "Night") icon = "🌙";
+
+    el.innerHTML = `
+      <input type="checkbox" value="${type}" ${checkbox.checked ? "checked" : ""}>
+      ${icon} ${type} (${menu[type] || ""})
+    `;
+
+    el.onclick = () => toggleMeal(el);
+    el.classList.toggle("active", checkbox.checked);
+  });
+}
+    function renderStaff(){
+  document.getElementById("app").innerHTML= `
+    <div style="text-align:right; margin-bottom:10px;">
+      <button onclick="location.hash='admin'">Admin</button>
+      <button onclick="location.hash='kitchen'">Kitchen</button>
+    </div>
+
+    <div class="card">
+      <img src="logo.png" class="logo">
+      <h2>Khaolak Wanaburee Resort</h2>
+      <p>Staff Meal Registration</p>
+
+      <input id="name" placeholder="Staff Name">
+
+      <select id="dept">
+        <option value="">Department</option>
+        <option value="ADMIN">ADMIN</option>
+        <option value="AC">AC</option>
+        <option value="FO">FO</option>
+        <option value="HR">HR</option>
+        <option value="EN">EN</option>
+        <option value="HK">HK</option>
+        <option value="MK">MK</option>
+        <option value="FB">FB</option>
+        <option value="GD(คนสวน)">GD(คนสวน)</option>
+      </select>
+
+      <div class="meals">
+        <div class="meal" onclick="toggleMeal(this)">
+          <input type="checkbox" value="Morning"> 🍳 Morning (${menu.Morning})
+        </div>
+        <div class="meal" onclick="toggleMeal(this)">
+          <input type="checkbox" value="Afternoon"> 🍛 Afternoon (${menu.Afternoon})
+        </div>
+        <div class="meal" onclick="toggleMeal(this)">
+          <input type="checkbox" value="Evening"> 🍜 Evening (${menu.Evening})
+        </div>
+        <div class="meal" onclick="toggleMeal(this)">
+          <input type="checkbox" value="Night"> 🌙 Night (${menu.Night})
+        </div>
+      </div>
+
+      <button onclick="register()">Register</button>
+      <p id="msg"></p>
+      <div id="list"></div>
+    </div>
+  `;
+
+  // โหลดชื่อเดิม
+  if(document.getElementById("name")){
+    document.getElementById("name").value = lastRegistered;
+  }
+
+  document.getElementById("list").innerHTML = "⏳ Loading...";
+
+  if(unsubscribeStaff) unsubscribeStaff();
+
+  unsubscribeStaff = onSnapshot(
+    query(collection(db,"staffmeal"), where("date","==",formatDate())),
+    snapshot => {
+      let todayData = [];
+
+      snapshot.forEach(doc=>{
+        todayData.push({ id: doc.id, ...doc.data() });
+      });
+
+      allData = todayData;
+
+      let html = `
+        <h3>📋 Staff Meal List (Today)</h3>
+        <table>
+        <tr><th>Name</th><th>Dept</th><th>Meals</th></tr>
+      `;
+
+      todayData.forEach(x=>{
+        html += `
+          <tr>
+            <td>${x.name}</td>
+            <td>${x.dept}</td>
+            <td>${x.meals.join(", ")}</td>
+          </tr>
+        `;
+      });
+
+      html += `</table>`;
+      document.getElementById("list").innerHTML = html;
+    }
+  );
+}
+function renderPage() {
+  if(mode=="admin") showLogin();
+  else if(mode=="kitchen") showKitchen();
+  else showStaff();
+}
+
+// --- Register Function with Auto-ID ---
+window.register = async function() {
+  if(isSubmitting) return;   // ✅ กันกดซ้ำ
+  isSubmitting = true;
+  const btn = document.querySelector(".card button");
+  btn.disabled = true;
+  btn.innerText = "Loading...";
+
+  const name = document.getElementById("name").value.trim();
+  const dept = document.getElementById("dept").value;
+
+  if (!name || !dept) {
+    document.getElementById("msg").innerHTML =
+      "<div class='success' style='background:#f8d7da;color:#842029'>⚠ กรุณากรอกข้อมูลให้ครบ</div>";
+    btn.innerText = "Register";
+    btn.disabled = false;
+    isSubmitting = false;
+    return; 
+  }
+  // ✅ ใส่ตรงนี้เลย (หลังเช็คข้อมูลครบแล้ว)
+if(!confirm("ยืนยันการลงทะเบียนใช่ไหม?")) {
+  btn.innerText = "Register";
+  btn.disabled = false;
+  isSubmitting = false;
+  return;
+}
+
+  const meals = [...document.querySelectorAll(".meal input:checked")].map(x => x.value);
+  if (meals.length === 0 || meals.length > 2) {
+    alert("เลือกได้ 1-2 มื้อ");
+    btn.innerText = "Register";
+    btn.disabled = false;
+    isSubmitting = false;
+    return;
+  }
+
+  const cleanName = name.toLowerCase();
+  if (allData.find(x => x.name.toLowerCase() === cleanName)) {
+    alert("You already registered");
+    btn.innerText = "Register";
+    btn.disabled = false;
+    isSubmitting = false;
+    return;
+  }
+
+  // บันทึกชื่อพนักงานล่าสุด
+  lastRegistered = name;
+  localStorage.setItem("lastRegistered", name);
+
+  // --- Firestore Auto-ID ---
+  const staffRef = collection(db, "staffmeal");
+  const newDocRef = doc(staffRef); // auto-generated ID
+  await setDoc(newDocRef, {
+    name,
+    dept,
+    meals,
+    time: new Date().toLocaleTimeString('en-GB'),
+    date: formatDate()
+  });
+
+  // ✅ SUCCESS UI
+  document.getElementById("msg").innerHTML =
+    "<div class='success'>✔ Registration Successful</div>";
+  new Audio("https://www.soundjay.com/buttons/sounds/button-3.mp3").play();
+
+  resetForm();
+
+  btn.innerText = "Register";
+btn.disabled = false;
+isSubmitting = false;
+
+document.getElementById("list").scrollIntoView({ behavior: "smooth" });
+
+} // ✅ ปิด function register ตรงนี้
+// --- resetForm ---
+function resetForm() {
+  setTimeout(() => document.querySelector(".success")?.remove(), 3000);
+  document.getElementById("dept").value = "";
+  document.querySelectorAll(".meal").forEach(el => {
+    el.classList.remove("active");
+    el.querySelector("input").checked = false;
+    el.querySelector("input").disabled = false;
+  });
+}
+
+// --- showLogin separated ---
+function showLogin() {
+  document.getElementById("app").innerHTML= `<div class="card">
+    <h3>Meal Menu Setting</h3>
+    <input id="m1" placeholder="Morning menu" value="${menu.Morning}">
+    <input id="m2" placeholder="Afternoon menu" value="${menu.Afternoon}">
+    <input id="m3" placeholder="Evening menu" value="${menu.Evening}">
+    <input id="m4" placeholder="Night menu" value="${menu.Night}">
+    <button onclick="saveMenu()">Save Menu</button>
+    <br><br>
+    <h2>HR Login</h2>
+    <input id="user" placeholder="Username">
+    <input id="pass" type="password" placeholder="Password">
+    <button onclick="login()">Login</button>
+  </div>`;
+}
+
+window.login = function(){
+  let u=document.getElementById("user").value, p=document.getElementById("pass").value;
+  if(u=="hr"&&p=="wanaburee") showDashboard();
+  else alert("Wrong password");
+};
+
+window.saveMenu = async function(){
+  let newMenu = {
+    Morning: document.getElementById("m1").value,
+    Afternoon: document.getElementById("m2").value,
+    Evening: document.getElementById("m3").value,
+    Night: document.getElementById("m4").value
+  };
+  await setDoc(doc(db,"menu","today"), newMenu);
+  alert("Menu Updated Real-time!");
+};
+
+// --- SPA initial load ---
+renderPage();
+
+setTimeout(()=>document.querySelector(".success")?.remove(),3000);
+if(document.getElementById("name")){
+  document.getElementById("name").value = lastRegistered;
+}
+document.getElementById("dept").value="";
+document.querySelectorAll(".meal").forEach(el=>{
+  el.classList.remove("active");
+  el.querySelector("input").checked = false;
+});
+    
+    window.exportExcel = async function(){
+      const todayStr=formatDate();
+      const q=query(collection(db,"staffmeal"), where("date","==",todayStr));
+      const snapshot=await getDocs(q);
+      let excelData = snapshot.docs.map(d => {
+  let data = d.data();
+  return {
+    ...data,
+    meals: data.meals.join(", ") // แปลงเป็น string
+  };
+});
+      if(excelData.length===0){ alert("No data to export"); return; }
+      let ws = XLSX.utils.json_to_sheet(excelData, { header: ["name","dept","meals","time","date"] });
+      let wb=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Staff Meals");
+      XLSX.writeFile(wb, "StaffMeals.xlsx");
+    };
+    
+function showDashboard(){
+  if(unsubscribeDashboard) unsubscribeDashboard();
+
+  unsubscribeDashboard = onSnapshot(
+    query(collection(db,"staffmeal"), where("date","==",formatDate())),
+    snapshot => {
+
+      const todayStr = formatDate();
+      let todayData = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      }));
+
+      let totalStaff = todayData.length;
+      let totalMeals = 0;
+      todayData.forEach(x => totalMeals += x.meals.length);
+
+      let html = `<div class="dashboard">
+        <div class="topbar">
+          <h2>Wanaburee Staff Meal Dashboard</h2>
+          <div>
+            <button onclick="exportExcel()">Export Excel</button>
+            <button onclick="location.hash=''">Staff Page</button>
+          </div>
+        </div>
+
+        <div class="cards">
+          <div class="box"><h2>${totalStaff}</h2><p>Staff</p></div>
+          <div class="box"><h2>${totalMeals}</h2><p>Meals</p></div>
+          <div class="box"><h2>${todayStr}</h2><p>Date</p></div>
+        </div>
+
+        <table>
+        <tr>
+          <th>Name</th>
+          <th>Dept</th>
+          <th>Meals</th>
+          <th>Time</th>
+          <th>Action</th>
+        </tr>`;
+
+      todayData.reverse().forEach(x=>{
+        html+=`<tr>
+          <td>${x.name}</td>
+          <td>${x.dept}</td>
+          <td>${x.meals.join(", ")}</td>
+          <td>${x.time}</td>
+          <td>
+            <button onclick="editData('${x.id}')">Edit</button>
+            <button onclick="deleteData('${x.id}')">Delete</button>
+          </td>
+        </tr>`;
+      });
+
+      html+=`</table></div>`;
+      document.getElementById("app").innerHTML = html;
+    }
+  );
+}
+
+function showKitchen() {
+  document.getElementById("app").innerHTML = `
+  <div class="kitchen">
+    <h2>Kitchen Dashboard</h2>
+    <button style="margin-bottom:15px;" onclick="location.hash=''">← Back</button>
+
+    <div class="kitchen-grid">
+      <div class="kitchen-box"><h1 id="morning-count">0</h1><p>Morning</p></div>
+      <div class="kitchen-box"><h1 id="afternoon-count">0</h1><p>Afternoon</p></div>
+      <div class="kitchen-box"><h1 id="evening-count">0</h1><p>Evening</p></div>
+      <div class="kitchen-box"><h1 id="night-count">0</h1><p>Night</p></div>
+    </div>
+
+    <div style="margin-top:30px; text-align:left;">
+      <h3>Staff Meal List (Today)</h3>
+      <table id="kitchen-table">
+        <tr><th>Name</th><th>Dept</th><th>Meals</th></tr>
+      </table>
+    </div>
+  </div>
+  `;
+
+  updateKitchenData(); // ✅ ต้องอยู่ใน function เท่านั้น
+}
+    function updateKitchenData() {
+      if(unsubscribeKitchen) unsubscribeKitchen();
+      const staffRef = query(
+  collection(db,"staffmeal"), 
+  where("date","==",formatDate())
+);
+      unsubscribeKitchen = onSnapshot(staffRef, snapshot => {
+        let todayData=[];
+        snapshot.forEach(doc=>{
+          let d=doc.data();
+         todayData.push(d);
+        });
+        let counts={Morning:0,Afternoon:0,Evening:0,Night:0};
+        todayData.forEach(x=>x.meals.forEach(m=>{
+          if(counts[m]!==undefined) counts[m]++;
+        }));
+        document.getElementById("morning-count").innerText=counts.Morning;
+        document.getElementById("afternoon-count").innerText=counts.Afternoon;
+        document.getElementById("evening-count").innerText=counts.Evening;
+        document.getElementById("night-count").innerText=counts.Night;
+        const table=document.getElementById("kitchen-table");
+        table.innerHTML=`<tr><th>Name</th><th>Dept</th><th>Meals</th></tr>`;
+        todayData.reverse().forEach(x=>{
+          let row=table.insertRow();
+          row.insertCell(0).innerText=x.name;
+          row.insertCell(1).innerText=x.dept;
+          row.insertCell(2).innerText=x.meals.join(", ");
+        });
+      });
+    }
+    
+    window.toggleMeal = function(el){
+  const checkbox = el.querySelector("input");
+
+  // สลับสถานะ checkbox และ class active
+  checkbox.checked = !checkbox.checked;
+  el.classList.toggle("active", checkbox.checked);
+
+  // นับจำนวน checkbox ที่เลือกแล้ว
+  const checkedCount = document.querySelectorAll(".meal input:checked").length;
+
+  // ปิด checkbox ที่เหลือถ้าเลือกครบ 2
+  document.querySelectorAll(".meal input").forEach(cb => {
+    cb.disabled = !cb.checked && checkedCount >= 2;
+   });
+};
+
+window.deleteData = async function(id){
+  if(confirm("Delete?")){
+    await deleteDoc(doc(db,"staffmeal",id));
+    alert("🗑️ Deleted successfully");
+  }
+};
+
+window.editData = async function(id){
+  const docRef = doc(db,"staffmeal",id);
+  
+  const newName = prompt("Edit name:");
+  if(!newName) return;
+
+  const newDept = prompt("Edit department:");
+  if(!newDept) return;
+
+  // ดึงข้อมูลเดิม
+  const old = allData.find(x => x.id === id);
+
+if(!old){
+  alert("Error: Data not found");
+  return;
+}
+
+  await setDoc(docRef, {
+    ...old,
+    name: newName,
+    dept: newDept
+  });
+
+  alert("Updated!");
+};
+  </script>
+</body>
+</html>
